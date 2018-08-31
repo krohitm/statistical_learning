@@ -1,0 +1,277 @@
+---
+title: "Medical cost"
+output: html_document
+---
+
+# Introduction
+
+Regression analysis is a simple yet powerful method to find the relations within a dataset. In this post, we will look at the insurance charges data obtained from Kaggle (https://www.kaggle.com/mirichoi0218/insurance/home). This data set consists of 7 columns: age, sex, bmi, children, smoker, region and charges. We will get into more details about these variables later.
+
+The key questions that we would be asking are:
+
+1. Is there a relationship between medical charges and other variables in the dataset?
+2. How strong is the relationship between the medical charges and other variables?
+3. Which variables have a strong relation to medical charges?
+4. How accurately can we estimate the effect of each variable on medical charges?
+5. How accurately can we predict future medical charges?
+6. Is the relationship linear?
+7. Is there synergy amont the predictors?
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+We start with importing the required libraries:
+
+```{r}
+library(magrittr)
+library(purrr)
+library(MASS)
+library(car)
+library(broom)
+library(ggplot2)
+library(psych)
+library(caret)
+```
+
+We import the data from the csv. We can see an overview of the data using summary() function.
+
+```{r}
+insurance <- read.csv('insurance.csv')
+summary(insurance)
+```
+
+The key points that can be taken from the summary are:
+
+1. The age of participants varies from 18 to 64.
+2. Around 49.48% of participants are female.
+3. The bmi of participants ranges from 15.96 to 53.13.
+4. Only 20.48% of the participants are smokers.
+
+# Is there a relationship between the medical charges and the predictors?
+
+Linear regression follows the formula : 
+
+y = beta+ .
+
+The coefficients in this linear equation denote the magnitude of additive relation between the predictor and the response.
+
+As such, the null hypothesis would be that there is no relation between any of the predictors and the response, which would be possible when all the coefficients for the predictors are 0. The alternate hypothesis would be that atleast one of the predictors has a relation with the outcome, that is the coefficient of one of the predictors is non-zero.
+
+This hypothesis is tested by computing the F-statistic. in case of no relationship between the predictor and the response, F-statistic will be closer to 1. On the contrary, if the alternate hypothesis is true, the F-statistic will be greater than 1. The p-value of F-statistic can be calculated using the number of records (n) and the number of predictors, and can then be used to determined whether the null hypothesis can be rejected or not.
+
+We will start with fitting a multiple linear regression model using all the predictors: 
+
+```{r}
+lm.fit <- lm(formula = charges~., data = insurance)
+#charges~. is the formula being used for linear regression. Here '.' means all the predictors in the dataset.
+summary(lm.fit)
+```
+
+A high value of F-statistic, with a significant p-value(<2.2e-16), implies that the null hypothesis can be rejected. This means there is a potential relationship between the predictors and the outcome.
+
+RSE (Residual Standard Error) is the estimate of standard deviation of irreducible error. I simpler words, it is the average difference between the actual outcome and the outcome from the fitted regression line. Hence, a large value of RSE means a high deviation from the true regression line. As such, RSE is useful in determining the lack of fit of the model to the data. RSE in our model is large (6062), indicating that the model doeswn't fit the data well.
+
+R-squared measures the proportion of variability in Y that can be explained by X, and is always between 0 and 1. A high value of R-squared (0.7494) shows that around 75% of variance of the data is being explained by the model.
+
+
+# Which variables have a strong relation to medical charges?
+
+If we look at the p-values of the estimated coefficients above, we see that not all the coefficients are statistically significant. This means that only a subset of the predictors are related to the outcome. The question is which one.
+
+We can look at the individual p-values for selecting the variables. This may not be a problem when the number of predictors(7) is quite small compared to the number of observations(1338). This method won't, however, work when number of predictors is greater than the number of observations. In such cases, we would have to use the _feature/variable selection_ methods, like forward selection, backward selection, or mixed selection. Before jumping on to feature selection using any of these methods, let us try regression using the features with significant p-values.
+
+```{r}
+lm.fit.sel <- lm(charges~age+bmi+children+smoker+region, data = insurance)
+summary(lm.fit.sel)
+```
+
+We will compare this to mixed variable selection, which is a combination of forward selection and backward selection.
+
+```{r}
+step.lm.fit <- stepAIC(lm.fit, direction = "both", trace = FALSE)
+summary(step.lm.fit)
+```
+
+The model given by stepwise selection is same as the model we got by selecting predictors with significant p-values; so the simple method of selecting the coefficients on the basis of p-values works in this case.
+
+We can see that there is a very slight improvement in R-squared value of the model(0.7494 -> 0.7496), with a very slight deterioration in RSE. (6062 -> 6060)
+
+Some key inferences to be taken from the model are:
+
+1. Charges increase with increase in age of the key beneficiary. For every 1 year increase in age of the key benificiary, keeping everything else fixed, charges increase by around $256.97.
+2. Similar relations can be seen for other predictors. Higher charges are expected with higher BMI or higher number of children/dependents or if the person is a smoker.
+
+# Is the relationship linear?
+
+By applying linear regression, we are assuming that there is a linear relationship between the predictors and the outcome. If the underlying relationship is quite far from linear, then most of the inferences we have made so far are doubtful. This also means reduced accuracy of model.
+
+The non-linearity of the model can be determined using residual plots. For multiple linear regression, we can plot the residuals versus fitted values. Presence of a pattern in the residual plots would imply a problem with the linear assumption of the model.
+
+```{r}
+residualPlot(step.lm.fit, type = "pearson", id=TRUE)
+```
+
+The blue line is a smooth fit of quadratic regression of Residuals as response and the Fitted values as the regressor. Thecurve is quite close to a straight line, indicating that the underlying data approximately follows linearity. (That number 1301 and 578; we'll get to that later)
+
+We can further plot the residual plots of individual predictors and residuals to see if any of the predictors demonstrate non-linearity.
+
+```{r}
+residualPlots(step.lm.fit)
+```
+
+We don't see any non-linearity with respect to individual predictors either.
+
+```{r}
+par(mfrow=c(2,2))
+plot(step.lm.fit)
+```
+
+# Correlation of error terms
+
+An important assumption of linear regression model is that the consecutive error terms are uncorrelated. The standard errors of the estimated regression coefficients are calculated on this basis. Hence, if the consecutive error terms are correlated, the standard errors of the estimated regression coefficients may be much larger.
+
+We can check the auto-correlation of residuals using the Durbin-Watson test. The null hypothesis is that the residuals have no auto-correlation. The alternate hypothesis is that the the residuals have a statistically significant correlation:
+
+```{r}
+set.seed(1)
+# Test for Autocorrelated Errors
+durbinWatsonTest(step.lm.fit, max.lag = 5, reps=1000)
+```
+
+Here we are checking for auto-correlation of residuals for 5 different lags. The p-value for none of the lags is less than 0.05. Hence, we cannot reject the null hypothesis.
+
+```{r}
+res <- step.lm.fit$residuals %>%
+  tidy 
+res$names <- as.numeric(res$names)
+res%>%
+  ggplot +
+  geom_point(aes(x=names, y=x)) +
+  labs(x='index', y='residuals')
+```
+
+# Non-constant variance of error terms
+
+Constant variance of residuals is another assumption of a linear regression model. The error terms may, for instance, change with the value of the response variable. One of the methods of identifying non-constant variance of errors is presence of a funnel shape in the residual plot.
+A more concrete way is an extension of the Breusch-Pagan Test, available in R as ncvTest() in the cars package. It assumes a null hypothesis of constant variance against the alternate hypothesis that the error variance changes with the level of the response or with a linear combination of predictors.
+
+```{r}
+# Evaluate homoscedasticity
+# non-constant error variance test
+ncvTest(step.lm.fit)
+#lmtest::bptest(step.lm.fit)
+# plot studentized residuals vs. fitted values 
+spreadLevelPlot(step.lm.fit)
+```
+
+A very low p-value(~4.2e-53) means the null hypothesis can be rejected. In other words, there is a high chance that errors have a non-constant variance. From the graph, we can also see how the spread of absolute studentized residuals is varying with increased value of fitted values. 
+On of the methods to fix this problem is transformation of the outcome variable. 
+
+```{r}
+bc <- boxcox(step.lm.fit, plotit = F) 
+powTrans <- bc$x[which.max(bc$y)]
+```
+
+```{r}
+chargesBCTrans <- BoxCoxTrans(insurance$charges)
+chargesBCTrans
+insurance$chargesTrans <- predict(chargesBCTrans, insurance$charges)
+head(insurance)
+```
+
+```{r}
+trans.lm.fit <- update(step.lm.fit, charges^0.41~.)
+
+# Evaluate homoscedasticity
+# non-constant error variance test
+ncvTest(trans.lm.fit)
+# plot studentized residuals vs. fitted values 
+spreadLevelPlot(trans.lm.fit)
+```
+
+```{r}
+plot(insurance$age, insurance$charges)
+```
+
+```{r}
+update(trans.lm.fit, ~age+I(log(bmi))+I(children^0.5)+smoker+region) %>%
+  #ncvTest()
+  #summary()
+  residualPlots()
+```
+
+## Extending the linear model
+
+```{r}
+lm(charges~age+bmi+children+smoker, data = insurance) %>%
+  summary()
+```
+```{r}
+tidy(lm.fit)
+```
+
+```{r}
+plot(lm.fit)
+```
+
+```{r}
+# Assessing Outliers
+outlierTest(lm.fit) # Bonferonni p-value for most extreme obs
+qqPlot(lm.fit, main="QQ Plot") #qq plot for studentized resid 
+leveragePlots(lm.fit) # leverage plots
+```
+
+
+
+
+
+```{r}
+lm.fit <- lm(log(charges)~age+bmi+children+smoker, data = insurance)
+summary(lm.fit)
+```
+
+```{r}
+plot(lm.fit)
+```
+
+
+```{r}
+# Evaluate homoscedasticity
+# non-constant error variance test
+ncvTest(lm.fit)
+# plot studentized residuals vs. fitted values 
+spreadLevelPlot(lm.fit)
+```
+
+```{r}
+# Test for Autocorrelated Errors
+durbinWatsonTest(lm.fit)
+```
+
+```{r}
+# Assessing Outliers
+outlierTest(lm.fit) # Bonferonni p-value for most extreme obs
+qqPlot(lm.fit, main="QQ Plot") #qq plot for studentized resid 
+leveragePlots(lm.fit) # leverage plots
+```
+
+```{r}
+vif(lm.fit)
+```
+
+```{r}
+# Evaluate Nonlinearity
+# component + residual plot 
+crPlots(lm.fit)
+# Ceres plots 
+ceresPlots(lm.fit)
+```
+
+Sources :
+1. https://www.kaggle.com/mirichoi0218/insurance/home
+2. An Introduction to Statistical Learning and Reasoning
+3. Wikipedia
+4. https://www.statmethods.net/stats/rdiagnostics.html
+5. https://www.statmethods.net/stats/regression.html
+6. https://datascienceplus.com/how-to-detect-heteroscedasticity-and-rectify-it/
