@@ -32,6 +32,7 @@ library(broom)
 library(ggplot2)
 library(psych)
 library(caret)
+library(tidyr)
 ```
 
 We import the data from the csv. We can see an overview of the data using summary() function.
@@ -47,6 +48,13 @@ The key points that can be taken from the summary are:
 2. Around 49.48% of participants are female.
 3. The bmi of participants ranges from 15.96 to 53.13.
 4. Only 20.48% of the participants are smokers.
+
+```{r}
+#insurance$age <- scale(insurance$age)
+#insurance$bmi <- scale(insurance$bmi)
+#insurance$children <- scale(insurance$children)
+```
+
 
 # Is there a relationship between the medical charges and the predictors?
 
@@ -112,20 +120,39 @@ The non-linearity of the model can be determined using residual plots. For multi
 residualPlot(step.lm.fit, type = "pearson", id=TRUE)
 ```
 
-The blue line is a smooth fit of quadratic regression of Residuals as response and the Fitted values as the regressor. Thecurve is quite close to a straight line, indicating that the underlying data approximately follows linearity. (That number 1301 and 578; we'll get to that later)
+The blue line is a smooth fit of quadratic regression of Residuals as response and the Fitted values as the regressor. The curve is quite close to a straight line, indicating that the underlying data approximately follows linearity. (That number 1301 and 578; we'll get to that later)
 
 We can further plot the residual plots of individual predictors and residuals to see if any of the predictors demonstrate non-linearity.
 
 ```{r}
-residualPlots(step.lm.fit)
+#residualPlots(step.lm.fit)
 ```
 
-We don't see any non-linearity with respect to individual predictors either.
+--We don't see any non-linearity with respect to individual predictors either.
 
 ```{r}
 par(mfrow=c(2,2))
 plot(step.lm.fit)
 ```
+
+One of the methods of fixing the problem of non-linearity is introducing interaction between the predictors. Out of the predictors that we have, an interaction of bmi and smoker may have an effect on the charges. Let's update the model and see if that makes a difference:
+
+```{r}
+lm.fit1 <- update(step.lm.fit, ~ .+bmi*smoker)
+lm.fit1 %>%
+  summary()
+
+lm.fit1 %>%
+  residualPlot(type = "pearson", id=TRUE)
+
+par(mfrow=c(2,2))
+lm.fit1 %>%
+  plot()
+
+#residualPlots(lm.fit1)
+```
+
+Looking at the plot for the residuals, we can see that the relation between fitted values and residuals is more linear now. Moreover, the adjusted R-squared is higher now (0.7496 -> 0.8395) and the F-statistic has improved too (572 -> 875.4). RSE has decreased too(6060 -> 4581).
 
 # Correlation of error terms
 
@@ -136,13 +163,13 @@ We can check the auto-correlation of residuals using the Durbin-Watson test. The
 ```{r}
 set.seed(1)
 # Test for Autocorrelated Errors
-durbinWatsonTest(step.lm.fit, max.lag = 5, reps=1000)
+durbinWatsonTest(lm.fit1, max.lag = 5, reps=1000)
 ```
 
 Here we are checking for auto-correlation of residuals for 5 different lags. The p-value for none of the lags is less than 0.05. Hence, we cannot reject the null hypothesis.
 
 ```{r}
-res <- step.lm.fit$residuals %>%
+res <- lm.fit1$residuals %>%
   tidy 
 res$names <- as.numeric(res$names)
 res%>%
@@ -153,119 +180,124 @@ res%>%
 
 # Non-constant variance of error terms
 
-Constant variance of residuals is another assumption of a linear regression model. The error terms may, for instance, change with the value of the response variable. One of the methods of identifying non-constant variance of errors is presence of a funnel shape in the residual plot.
+Constant variance of residuals is another assumption of a linear regression model. The error terms may, for instance, change with the value of the response variable in case of non-constant variance of errors. One of the methods of identifying non-constant variance of errors is presence of a funnel shape in the residual plot.
 A more concrete way is an extension of the Breusch-Pagan Test, available in R as ncvTest() in the cars package. It assumes a null hypothesis of constant variance against the alternate hypothesis that the error variance changes with the level of the response or with a linear combination of predictors.
 
 ```{r}
 # Evaluate homoscedasticity
 # non-constant error variance test
-ncvTest(step.lm.fit)
-#lmtest::bptest(step.lm.fit)
+ncvTest(lm.fit1)
+lmtest::bptest(lm.fit1)
 # plot studentized residuals vs. fitted values 
-spreadLevelPlot(step.lm.fit)
+spreadLevelPlot(lm.fit1)
 ```
 
-A very low p-value(~4.2e-53) means the null hypothesis can be rejected. In other words, there is a high chance that errors have a non-constant variance. From the graph, we can also see how the spread of absolute studentized residuals is varying with increased value of fitted values. 
-On of the methods to fix this problem is transformation of the outcome variable. 
+A very low p-value(~9.59e-07) means the null hypothesis can be rejected. In other words, there is a high chance that errors have a non-constant variance. From the graph, we can also see how the spread of absolute studentized residuals is varying with increased value of fitted values. 
+One of the methods to fix this problem is transformation of the outcome variable. 
 
 ```{r}
-bc <- boxcox(step.lm.fit, plotit = F) 
-powTrans <- bc$x[which.max(bc$y)]
-```
+yTransformer <- 0.78
 
-```{r}
-chargesBCTrans <- BoxCoxTrans(insurance$charges)
-chargesBCTrans
-insurance$chargesTrans <- predict(chargesBCTrans, insurance$charges)
-head(insurance)
-```
+trans.lm.fit <- update(lm.fit1, charges^yTransformer~.)
+trans.lm.fit %>%
+  summary
 
-```{r}
-trans.lm.fit <- update(step.lm.fit, charges^0.41~.)
-
+trans.lm.fit %>%
+  residualPlot()
 # Evaluate homoscedasticity
 # non-constant error variance test
 ncvTest(trans.lm.fit)
+
 # plot studentized residuals vs. fitted values 
 spreadLevelPlot(trans.lm.fit)
 ```
 
+A p-value of 0.94 implies here that we cannot reject the null hypothesis of constant variance of error terms. However, there is a slight decrease in both adjusted R-squared as well as F-statistic.
+
+This can be fixed further by looking at relations between individual predictors and outcome.
+
+***
+
+# Outliers
+
+Outliers are the observations which in some way are quite different from the distribution of the data. With respect to a model, an outlier is an observation whose predicted outcome is much different from the actual value of the outcome.
+
+Residual Plots can be used to identify outliers. To use a standard comparison of residuals, we can use studentized residuals. Usually, the observations with residuals above 3 are possible outliers.
 ```{r}
-plot(insurance$age, insurance$charges)
+#temp <- update(trans.lm.fit, ~.+age*smoker+bmi*smoker)
+temp <- trans.lm.fit
+
+insCopy <- insurance
+insCopy$charges <- (insurance$charges)^yTransformer
+insCopy$predicted <- predict(temp)
+insCopy$residuals <- residuals(temp)
+
+insCopy %>%
+  ggplot(aes(x=charges, y=predicted)) +
+  geom_point()
+
+insCopy %>%
+  ggplot(aes(x=charges, y=residuals)) +
+  geom_point()
+
+insCopy %>%
+  ggplot(aes(x=predicted, y=residuals)) +
+  geom_point()
+```
+
+Care should be taken to not simply remove the outliers on the basis of analysis. If an outlier is due to ...
+
+
+```{r}
+insurance %>%
+  keep(is.numeric) %>%
+  outlier(bad=5)
+```
+
+
+```{r}
+# Assessing Outliers
+outlierTest(trans.lm.fit, n.max = 20) # Bonferonni p-value for most extreme obs
+qqPlot(trans.lm.fit, main="QQ Plot") #qq plot for studentized resid 
+#leveragePlots(trans.lm.fit) # leverage plots
 ```
 
 ```{r}
-update(trans.lm.fit, ~age+I(log(bmi))+I(children^0.5)+smoker+region) %>%
-  #ncvTest()
-  #summary()
-  residualPlots()
+clean.insurance <- insurance %>%
+  dplyr::slice(-c(517, 1301, 220, 1020, 431, 243, 527, 1207, 937, 1040, 103, 600))
 ```
 
-## Extending the linear model
-
 ```{r}
-lm(charges~age+bmi+children+smoker, data = insurance) %>%
+lm.fit2 <- update(trans.lm.fit, .~., data = clean.insurance) 
+lm.fit2 %>%
   summary()
-```
-```{r}
-tidy(lm.fit)
-```
-
-```{r}
-plot(lm.fit)
+  #residualPlot()
+  #spreadLevelPlot()
+  #plot()
+  #outlierTest()
 ```
 
-```{r}
-# Assessing Outliers
-outlierTest(lm.fit) # Bonferonni p-value for most extreme obs
-qqPlot(lm.fit, main="QQ Plot") #qq plot for studentized resid 
-leveragePlots(lm.fit) # leverage plots
-```
-
-
-
+# High Leverage points
 
 
 ```{r}
-lm.fit <- lm(log(charges)~age+bmi+children+smoker, data = insurance)
-summary(lm.fit)
+vif(lm.fit2)
 ```
 
 ```{r}
-plot(lm.fit)
+plot(lm.fit2)
+```
+
+```{r}
+ins.copy <- insurance
+ins.copy$charges <- ins.copy$charges^yTransformer
+clean.insurance$charges <- clean.insurance$charges^yTransformer
+lm.final <- lm(charges~age+bmi+smoker+children+bmi*smoker, data = ins.copy)
 ```
 
 
 ```{r}
-# Evaluate homoscedasticity
-# non-constant error variance test
-ncvTest(lm.fit)
-# plot studentized residuals vs. fitted values 
-spreadLevelPlot(lm.fit)
-```
-
-```{r}
-# Test for Autocorrelated Errors
-durbinWatsonTest(lm.fit)
-```
-
-```{r}
-# Assessing Outliers
-outlierTest(lm.fit) # Bonferonni p-value for most extreme obs
-qqPlot(lm.fit, main="QQ Plot") #qq plot for studentized resid 
-leveragePlots(lm.fit) # leverage plots
-```
-
-```{r}
-vif(lm.fit)
-```
-
-```{r}
-# Evaluate Nonlinearity
-# component + residual plot 
-crPlots(lm.fit)
-# Ceres plots 
-ceresPlots(lm.fit)
+confint(lm.final)
 ```
 
 Sources :
